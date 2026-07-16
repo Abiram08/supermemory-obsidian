@@ -1,0 +1,70 @@
+# --- Dependencies (never push) ---
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.npm
+.yarn/
+.pnp.*
+
+# --- Build / compile output ---
+# Bundle is produced by `npm run build` (attach to GitHub Releases if needed)
+main.js
+main.js.map
+*.map
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# --- Secrets & local runtime data ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+# Obsidian plugin persisted data (can hold API keys)
+data.json
+# Supermemory Local database / embeddings cache
+.supermemory/
+**/.supermemory/
+
+# --- Agent / internal build-spec docs (not product source) ---
+AGENT.md
+AGENTS.md
+CLAUD.md
+CLAUDE.md
+CLEANUP_GUIDE.md
+TESTING_DEMO_GUIDE.md
+.agents/
+.claude/
+.cursor/
+.grok/
+
+# --- Editors & OS ---
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# --- Logs & caches ---
+logs/
+*.log
+.cache/
+.eslintcache
+.turbo/
+coverage/
+.nyc_output/
+
+# --- Misc local junk ---
+*.tmp
+*.temp
+.temp/
+tmp/
+temp/

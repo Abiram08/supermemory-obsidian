@@ -1,0 +1,10 @@
+{
+	"id": "obsidian-supermemory",
+	"name": "Supermemory for Obsidian",
+	"version": "0.1.0",
+	"minAppVersion": "1.7.2",
+	"description": "Semantic search, writing-time suggestions, and an auto-synthesized profile for your Obsidian vault — powered by a local Supermemory instance. Nothing leaves your machine.",
+	"author": "Supermemory for Obsidian",
+	"authorUrl": "https://supermemory.ai",
+	"isDesktopOnly": true
+}
