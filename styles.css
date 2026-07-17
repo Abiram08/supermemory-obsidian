@@ -299,8 +299,25 @@
 .sm-mode-row {
 	display: flex;
 	flex-wrap: wrap;
+	align-items: center;
 	gap: 6px;
 	margin-top: 8px;
+}
+
+.sm-filter-label {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+	margin-right: 4px;
+}
+
+.sm-select {
+	max-width: 100%;
+	padding: 4px 8px;
+	font-size: var(--font-ui-small);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	background: var(--background-primary);
+	color: var(--text-normal);
 }
 
 .sm-mode-row .sm-button {

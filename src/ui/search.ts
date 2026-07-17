@@ -2,6 +2,8 @@ import type { WorkspaceLeaf } from 'obsidian';
 import type SupermemoryPlugin from '../main';
 import type { SearchReply } from '../api';
 import { SEARCH_LIMIT } from '../config';
+import { topFolder } from '../notes';
+import { isUnreachable } from '../api';
 import { Panel, paintHit } from './shell';
 
 export const SEARCH_VIEW = 'supermemory-search';
@@ -28,6 +30,14 @@ export class SearchPanel extends Panel {
 		this.contentEl.empty();
 	}
 
+	private vaultFolders(): string[] {
+		const set = new Set<string>();
+		for (const f of this.app.vault.getMarkdownFiles()) {
+			set.add(topFolder(f.path));
+		}
+		return Array.from(set).sort((a, b) => a.localeCompare(b));
+	}
+
 	private draw(): void {
 		this.contentEl.empty();
 		if (!this.needKey()) return;
@@ -40,6 +50,18 @@ export class SearchPanel extends Panel {
 		});
 		input.setAttribute('aria-label', 'Semantic search query');
 
+		// Folder filter row
+		const filterRow = header.createDiv({ cls: 'sm-mode-row' });
+		filterRow.createSpan({ cls: 'sm-filter-label', text: 'Folder' });
+		const folderSelect = filterRow.createEl('select', { cls: 'sm-select' });
+		folderSelect.setAttribute('aria-label', 'Filter by top-level folder');
+		const optAll = folderSelect.createEl('option', { text: 'All folders', value: 'all' });
+		optAll.selected = true;
+		for (const folder of this.vaultFolders()) {
+			folderSelect.createEl('option', { text: folder, value: folder });
+		}
+
+		// Mode row
 		const modes = header.createDiv({ cls: 'sm-mode-row' });
 		const hybrid = modes.createEl('button', {
 			cls: 'sm-button sm-mode-active',
@@ -61,11 +83,14 @@ export class SearchPanel extends Panel {
 			setMode('memories');
 			if (input.value.trim()) void go(input.value);
 		});
+		folderSelect.addEventListener('change', () => {
+			if (input.value.trim()) void go(input.value);
+		});
 
 		const out = this.contentEl.createDiv({ cls: 'sm-results' });
 		this.empty(
 			out,
-			"Type a phrase above. Try wording that doesn't literally appear in any note — supermemory finds it by meaning.",
+			"Type a phrase above. Optionally pick a folder to scope meaning search — e.g. only Projects.",
 		);
 
 		const go = async (raw: string) => {
@@ -75,21 +100,29 @@ export class SearchPanel extends Panel {
 				this.empty(out, 'Type a phrase above to search by meaning.');
 				return;
 			}
+			const folder = folderSelect.value || 'all';
 			out.empty();
-			out.createDiv({ cls: 'sm-loading', text: 'Searching…' });
+			out.createDiv({
+				cls: 'sm-loading',
+				text:
+					folder === 'all'
+						? 'Searching…'
+						: `Searching in “${folder}”…`,
+			});
 			try {
 				const res = await this.api().search({
 					q,
 					containerTag: this.space,
 					limit: SEARCH_LIMIT,
 					searchMode: mode,
-					rerank: mode === 'hybrid',
-					threshold: 0.45,
+					threshold: 0.4,
+					folder: folder === 'all' ? null : folder,
 				});
-				this.show(out, q, res, mode);
+				this.show(out, q, res, mode, folder);
 			} catch (e) {
 				out.empty();
-				this.down(this.errText(e));
+				if (isUnreachable(e)) this.down(this.errText(e));
+				else this.empty(out, 'Search failed: ' + this.errText(e));
 			}
 		};
 
@@ -101,17 +134,29 @@ export class SearchPanel extends Panel {
 		});
 	}
 
-	private show(parent: HTMLElement, q: string, res: SearchReply, mode: string): void {
+	private show(
+		parent: HTMLElement,
+		q: string,
+		res: SearchReply,
+		mode: string,
+		folder: string,
+	): void {
 		parent.empty();
 		const total = res.total ?? res.results.length;
 		const ms = typeof res.timing === 'number' ? ` · ${Math.round(res.timing)}ms` : '';
+		const scope = folder === 'all' ? 'all folders' : `folder: ${folder}`;
 		parent.createDiv({
 			cls: 'sm-results-meta',
-			text: `${total} result${total === 1 ? '' : 's'} for "${q}" (${mode})${ms}`,
+			text: `${total} result${total === 1 ? '' : 's'} for "${q}" (${mode} · ${scope})${ms}`,
 		});
 		const list = parent.createDiv({ cls: 'sm-results-list' });
 		if (!res.results.length) {
-			this.empty(list, 'No relevant notes found. Try a different phrasing, or sync the vault first.');
+			this.empty(
+				list,
+				folder === 'all'
+					? 'No relevant notes found. Try a different phrasing, or sync the vault first.'
+					: `No hits in “${folder}”. Try All folders, or another folder.`,
+			);
 			return;
 		}
 		for (const h of res.results) {

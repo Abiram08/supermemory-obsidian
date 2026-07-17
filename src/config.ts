@@ -28,6 +28,10 @@ export interface PluginSettings {
 	lastProfileSnapshot: string | null;
 	autoSync: boolean;
 	debug: boolean;
+	/** Soft warnings when typing conflicts with profile memories */
+	contradictWhileTyping: boolean;
+	/** Vault path for the living profile note */
+	livingProfilePath: string;
 	syncIndex: Record<string, NoteSyncEntry>;
 }
 
@@ -38,6 +42,8 @@ export const DEFAULT_SETTINGS: PluginSettings = {
 	lastProfileSnapshot: null,
 	autoSync: false,
 	debug: false,
+	contradictWhileTyping: true,
+	livingProfilePath: 'Meta/My memory profile.md',
 	syncIndex: {},
 };
 

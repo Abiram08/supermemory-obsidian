@@ -24,19 +24,23 @@ out/
 !.env.example
 *.pem
 *.key
-# Obsidian plugin persisted data (can hold API keys)
 data.json
-# Supermemory Local database / embeddings cache
 .supermemory/
 **/.supermemory/
 
-# --- Agent / internal build-spec docs (not product source) ---
+# --- Internal docs, agent specs, demo helpers (not product source) ---
+# Keep in repo: README.md, LICENSE, src/, package files, manifest, styles
 AGENT.md
 AGENTS.md
 CLAUD.md
 CLAUDE.md
 CLEANUP_GUIDE.md
 TESTING_DEMO_GUIDE.md
+DEMO_AND_TESTING.md
+Tasks.md
+TASKS.md
+docs/
+sample-vault/
 .agents/
 .claude/
 .cursor/
@@ -62,7 +66,7 @@ logs/
 coverage/
 .nyc_output/
 
-# --- Misc local junk ---
+# --- Misc ---
 *.tmp
 *.temp
 .temp/

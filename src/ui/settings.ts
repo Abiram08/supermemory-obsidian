@@ -123,6 +123,31 @@ export class SettingsTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
+			.setName('Contradict while typing')
+			.setDesc(
+				'Soft notice when what you type conflicts with Supermemory profile facts (e.g. Postgres vs SQLite). Peak temporal memory.',
+			)
+			.addToggle((t) =>
+				t.setValue(s.contradictWhileTyping !== false).onChange(async (v) => {
+					s.contradictWhileTyping = v;
+					await this.plugin.saveSettings();
+				}),
+			);
+
+		new Setting(containerEl)
+			.setName('Living profile note path')
+			.setDesc('Vault path for the auto-updated memory profile markdown file.')
+			.addText((t) =>
+				t
+					.setPlaceholder('Meta/My memory profile.md')
+					.setValue(s.livingProfilePath || 'Meta/My memory profile.md')
+					.onChange(async (v) => {
+						s.livingProfilePath = v.trim() || 'Meta/My memory profile.md';
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
 			.setName('Debug logging')
 			.setDesc('Write detailed supermemory logs to the developer console (Ctrl+Shift+I).')
 			.addToggle((t) =>

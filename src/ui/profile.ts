@@ -8,7 +8,10 @@ import {
 	isMemoryHit,
 	isUnreachable,
 	type ProfileReply,
+	type SearchHit,
 } from '../api';
+import { writeLivingProfileNote } from '../livingProfile';
+import { buildProfileFactsFromVault } from '../profileBuild';
 import { Panel, paintHit } from './shell';
 
 export const PROFILE_VIEW = 'supermemory-profile';
@@ -41,11 +44,28 @@ export class ProfilePanel extends Panel {
 
 		const header = this.contentEl.createDiv({ cls: 'sm-panel-header' });
 		header.createEl('h4', { text: 'What your notes say about you' });
-		const refresh = header.createEl('button', { cls: 'sm-button', text: 'Refresh profile' });
+		header.createEl('p', {
+			cls: 'sm-section-hint',
+			text: `Space: ${this.space} · Local extracts facts after sync (needs LLM). Search still works on note text while profile fills.`,
+		});
+		const refresh = header.createEl('button', { cls: 'sm-button sm-button-primary', text: 'Refresh profile' });
+		const buildBtn = header.createEl('button', {
+			cls: 'sm-button',
+			text: 'Build profile facts',
+		});
+		buildBtn.setAttr(
+			'title',
+			'If Stable/Current stay empty after sync, build facts from your notes into Supermemory',
+		);
+		const liveBtn = header.createEl('button', {
+			cls: 'sm-button',
+			text: 'Write living note',
+		});
+		liveBtn.setAttr('title', 'Write Meta/My memory profile.md from Supermemory profile');
 		const focus = header.createEl('input', {
 			type: 'text',
 			cls: 'sm-search-input',
-			placeholder: 'Optional: focus the profile on a topic',
+			placeholder: 'Optional: focus on a topic (e.g. database)',
 		});
 		focus.setAttribute('aria-label', 'Optional focus query');
 		const snap = header.createEl('button', { cls: 'sm-button', text: 'Save snapshot' });
@@ -61,25 +81,68 @@ export class ProfilePanel extends Panel {
 			body.createDiv({ cls: 'sm-loading', text: 'Synthesizing your profile…' });
 			try {
 				const q = focus.value.trim();
-				last = await this.api().profile({
+				const profile = await this.api().profile({
 					containerTag: this.space,
 					...(q ? { q } : {}),
-					threshold: 0.5,
+					// Soft threshold — only affects profile searchResults, not static/dynamic lists
+					threshold: 0.4,
 				});
-				this.renderProfile(body, last);
+
+				const staticFacts = profile.profile?.static ?? [];
+				const dynamicFacts = profile.profile?.dynamic ?? [];
+				const emptyFacts = staticFacts.length === 0 && dynamicFacts.length === 0;
+
+				// Local often finishes document index before LLM fact extraction.
+				// Fall back to hybrid note search so the panel is still useful for demos.
+				let noteHits: SearchHit[] = profile.searchResults?.results ?? [];
+				if (emptyFacts || noteHits.length === 0) {
+					const fallbackQ =
+						q ||
+						'preferences decisions tools stack projects database goals habits work';
+					const search = await this.api().search({
+						q: fallbackQ,
+						containerTag: this.space,
+						limit: 12,
+						searchMode: 'hybrid',
+						threshold: 0.3,
+					});
+					noteHits = search.results ?? [];
+				}
+
+				last = {
+					...profile,
+					searchResults: {
+						results: noteHits,
+						total: noteHits.length,
+					},
+				};
+				this.renderProfile(body, last, emptyFacts);
 			} catch (e) {
 				body.empty();
 				if (isUnreachable(e)) this.down(this.errText(e));
 				else {
 					this.empty(
 						body,
-						"Couldn't build a profile — sync the vault and wait for supermemory to finish processing.",
+						"Couldn't build a profile: " +
+							this.errText(e) +
+							' — sync the vault and keep Local running with a working LLM key (e.g. Groq).',
 					);
 				}
 			}
 		};
 
 		refresh.addEventListener('click', () => void load());
+		buildBtn.addEventListener('click', () => {
+			void (async () => {
+				buildBtn.setAttr('disabled', 'disabled');
+				const r = await buildProfileFactsFromVault(this.app, this.plugin);
+				buildBtn.removeAttribute('disabled');
+				if (r.ok) void load();
+			})();
+		});
+		liveBtn.addEventListener('click', () => {
+			void writeLivingProfileNote(this.plugin, { open: true });
+		});
 		focus.addEventListener('keydown', (ev) => {
 			if (ev.key === 'Enter') {
 				ev.preventDefault();
@@ -113,23 +176,35 @@ export class ProfilePanel extends Panel {
 		});
 	}
 
-	private renderProfile(parent: HTMLElement, profile: ProfileReply): void {
+	private renderProfile(parent: HTMLElement, profile: ProfileReply, factsEmpty: boolean): void {
 		parent.empty();
 		const stable = profile.profile?.static ?? [];
 		const current = profile.profile?.dynamic ?? [];
 		const related = profile.searchResults?.results ?? [];
 		const wrap = parent.createDiv({ cls: 'sm-profile' });
 
+		if (factsEmpty) {
+			const banner = wrap.createDiv({ cls: 'sm-status-card' });
+			banner.createDiv({
+				cls: 'sm-status-hint',
+				text:
+					'No extracted profile facts yet (Stable / Current are empty). ' +
+					'Documents are indexed — hybrid search works — but Local has not filled static/dynamic memories. ' +
+					'Keep Local running with a valid LLM key (Groq/OpenAI/…), wait a few minutes after sync, then refresh. ' +
+					'Below: related notes from your vault so you can still demo value.',
+			});
+		}
+
 		const sSec = wrap.createDiv({ cls: 'sm-profile-section' });
 		sSec.createEl('h5', { text: 'Stable facts' });
 		sSec.createEl('p', {
 			cls: 'sm-section-hint',
-			text: 'Long-lived identity traits supermemory extracted from your notes.',
+			text: 'Long-lived identity traits Supermemory extracted from your notes.',
 		});
 		if (!stable.length) {
 			sSec.createEl('p', {
 				cls: 'sm-empty',
-				text: 'No stable facts yet — sync more personal notes and wait for processing.',
+				text: 'No stable facts yet — Local needs LLM memory extraction after sync. Use related notes below for now.',
 			});
 		} else for (const f of stable) sSec.createDiv({ cls: 'sm-fact', text: f });
 
@@ -140,7 +215,10 @@ export class ProfilePanel extends Panel {
 			text: 'What is true now. Use "show history" to see how a fact evolved.',
 		});
 		if (!current.length) {
-			dSec.createEl('p', { cls: 'sm-empty', text: 'Nothing changing detected yet.' });
+			dSec.createEl('p', {
+				cls: 'sm-empty',
+				text: 'Nothing changing detected yet — same cause as empty stable facts (extraction still pending or LLM issue).',
+			});
 		} else {
 			for (const f of current) {
 				const row = dSec.createDiv({ cls: 'sm-fact sm-fact-dynamic' });
@@ -152,18 +230,39 @@ export class ProfilePanel extends Panel {
 			}
 		}
 
+		// When profile facts are empty, still offer history on a synthetic "topic"
+		if (factsEmpty) {
+			const tip = wrap.createDiv({ cls: 'sm-profile-section' });
+			tip.createEl('h5', { text: 'Topic history (from notes)' });
+			tip.createEl('p', {
+				cls: 'sm-section-hint',
+				text: 'While profile facts are empty, pick a topic and search your notes over time.',
+			});
+			const row = tip.createDiv({ cls: 'sm-home-secondary' });
+			for (const topic of ['database', 'preferences', 'tools', 'work']) {
+				const b = row.createEl('button', { cls: 'sm-button', text: `History: ${topic}` });
+				b.addEventListener('click', () => {
+					void (async () => {
+						const host = tip.createDiv({ cls: 'sm-history' });
+						host.createDiv({ cls: 'sm-loading', text: 'Loading…' });
+						await this.fillHistory(host, topic);
+					})();
+				});
+			}
+		}
+
 		const mSec = wrap.createDiv({ cls: 'sm-profile-section' });
-		mSec.createEl('h5', { text: 'Related notes' });
+		mSec.createEl('h5', { text: factsEmpty ? 'Related notes (from your vault)' : 'Related notes' });
 		if (!related.length) {
 			mSec.createEl('p', {
 				cls: 'sm-empty',
-				text: profile.searchResults
-					? 'No related notes surfaced for this focus.'
-					: 'Add a focus topic above and refresh to pull related notes with the profile.',
+				text: 'No notes returned. Sync the vault and confirm Search works for this vault first.',
 			});
 		} else {
 			const list = mSec.createDiv({ cls: 'sm-results-list' });
-			for (const h of related) paintHit(this.app, list, h, { snippet: 180 });
+			for (const h of related) {
+				paintHit(this.app, list, h, { snippet: 180, score: true, badge: true });
+			}
 		}
 	}
 
@@ -179,59 +278,63 @@ export class ProfilePanel extends Panel {
 		btn.setAttribute('disabled', 'disabled');
 		btn.setText('Loading history…');
 		try {
-			const api = this.api();
-			let res = await api.search({
-				q: fact,
-				containerTag: this.space,
-				limit: 12,
-				searchMode: 'memories',
-				threshold: 0.4,
-			});
-			if (!res.results.length) {
-				res = await api.search({
-					q: fact,
-					containerTag: this.space,
-					limit: 10,
-					searchMode: 'hybrid',
-					rerank: true,
-					threshold: 0.4,
-				});
-			}
 			const box = host.createDiv({ cls: 'sm-history' });
-			if (!res.results.length) {
-				box.createEl('p', { cls: 'sm-empty', text: 'No notes or memories touch this topic yet.' });
-			} else {
-				const sorted = res.results
-					.map((r) => ({
-						r,
-						date: dateIn(hitText(r)) ?? (typeof r.updatedAt === 'string' ? r.updatedAt.slice(0, 10) : ''),
-					}))
-					.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
-
-				for (const { r, date } of sorted) {
-					const item = box.createDiv({ cls: 'sm-history-item' });
-					item.createDiv({
-						cls: 'sm-history-date',
-						text: `${date || 'unknown date'} · ${isMemoryHit(r) ? 'memory' : 'note'}`,
-					});
-					const title = hitTitle(r);
-					const path = hitPath(r);
-					const tEl = item.createDiv({ cls: 'sm-result-title', text: title });
-					if (path) {
-						tEl.addClass('sm-result-clickable');
-						tEl.addEventListener('click', () => void this.app.workspace.openLinkText(path, '', false));
-					}
-					const snip = hitSnippet(hitText(r));
-					if (snip && snip !== title) {
-						item.createDiv({ cls: 'sm-result-snippet', text: snip.slice(0, 160) });
-					}
-				}
-			}
+			await this.fillHistory(box, fact);
 			btn.setText('Hide history');
 		} catch {
 			btn.setText('Failed to load history');
 		} finally {
 			btn.removeAttribute('disabled');
+		}
+	}
+
+	private async fillHistory(box: HTMLElement, topic: string): Promise<void> {
+		box.empty();
+		const api = this.api();
+		let res = await api.search({
+			q: topic,
+			containerTag: this.space,
+			limit: 12,
+			searchMode: 'memories',
+			threshold: 0.3,
+		});
+		if (!res.results.length) {
+			res = await api.search({
+				q: topic,
+				containerTag: this.space,
+				limit: 12,
+				searchMode: 'hybrid',
+				threshold: 0.3,
+			});
+		}
+		if (!res.results.length) {
+			box.createEl('p', { cls: 'sm-empty', text: 'No notes or memories touch this topic yet.' });
+			return;
+		}
+		const sorted = res.results
+			.map((r) => ({
+				r,
+				date: dateIn(hitText(r)) ?? (typeof r.updatedAt === 'string' ? r.updatedAt.slice(0, 10) : ''),
+			}))
+			.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+
+		for (const { r, date } of sorted) {
+			const item = box.createDiv({ cls: 'sm-history-item' });
+			item.createDiv({
+				cls: 'sm-history-date',
+				text: `${date || 'unknown date'} · ${isMemoryHit(r) ? 'memory' : 'note'}`,
+			});
+			const title = hitTitle(r);
+			const path = hitPath(r);
+			const tEl = item.createDiv({ cls: 'sm-result-title', text: title });
+			if (path) {
+				tEl.addClass('sm-result-clickable');
+				tEl.addEventListener('click', () => void this.app.workspace.openLinkText(path, '', false));
+			}
+			const snip = hitSnippet(hitText(r));
+			if (snip && snip !== title) {
+				item.createDiv({ cls: 'sm-result-snippet', text: snip.slice(0, 160) });
+			}
 		}
 	}
 
@@ -263,12 +366,18 @@ export class ProfilePanel extends Panel {
 }
 
 function serialize(p: ProfileReply): string {
+	const staticF = p.profile?.static ?? [];
+	const dynamicF = p.profile?.dynamic ?? [];
+	const related = (p.searchResults?.results ?? []).map((r) => hitTitle(r));
 	return [
 		'## Stable facts',
-		...(p.profile?.static ?? []),
+		...(staticF.length ? staticF : ['(none yet)']),
 		'',
 		'## Current state',
-		...(p.profile?.dynamic ?? []),
+		...(dynamicF.length ? dynamicF : ['(none yet)']),
+		'',
+		'## Related notes',
+		...related.slice(0, 12),
 	].join('\n');
 }
 

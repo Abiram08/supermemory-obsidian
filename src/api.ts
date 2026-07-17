@@ -124,7 +124,8 @@ export class MemoryApi {
 	> {
 		if (!this.key) return { ok: false, reason: 'no-api-key' };
 		try {
-			await this.post('/v4/search', { q: ' ', containerTag: 'connection_test', limit: 1 });
+			// Local validates q min length 1 after trim — a space alone returns 400.
+			await this.post('/v4/search', { q: 'ping', containerTag: 'connection_test', limit: 1 });
 			return { ok: true };
 		} catch (e) {
 			if (isUnreachable(e)) return { ok: false, reason: 'unreachable', detail: smMessage(e) };
@@ -182,18 +183,67 @@ export class MemoryApi {
 		searchMode?: 'hybrid' | 'memories';
 		rerank?: boolean;
 		threshold?: number;
+		/** Supermemory metadata filters, e.g. folder scope */
+		filters?: Record<string, unknown>;
+		/** If set, also filter results client-side by metadata.folder (fallback if server ignores filters). */
+		folder?: string | null;
 	}): Promise<SearchReply> {
-		const raw = (await this.post('/v4/search', {
+		const body: Record<string, unknown> = {
 			q: p.q,
 			containerTag: p.containerTag,
 			...(p.limit != null ? { limit: p.limit } : {}),
 			...(p.searchMode ? { searchMode: p.searchMode } : {}),
 			...(p.rerank ? { rerank: true } : {}),
 			...(p.threshold != null ? { threshold: p.threshold } : {}),
-		})) as SearchReply;
+		};
+		if (p.filters) body.filters = p.filters;
+		else if (p.folder && p.folder !== 'all') {
+			// Scope hybrid search to notes synced with metadata.folder
+			body.filters = {
+				AND: [{ key: 'folder', value: p.folder }],
+			};
+		}
 
-		const results = uniqBy(raw?.results ?? [], (r) => hitText(r) || r.id || '');
-		return { results, timing: raw?.timing, total: raw?.total ?? results.length };
+		const raw = (await this.post('/v4/search', body)) as SearchReply;
+		let results = uniqBy(raw?.results ?? [], (r) => hitText(r) || r.id || '');
+
+		// Client-side safety net — Local may not always apply filters the same way as cloud
+		if (p.folder && p.folder !== 'all') {
+			const folder = p.folder;
+			const filtered = results.filter((r) => {
+				const f = r.metadata?.folder;
+				if (typeof f === 'string' && f.length > 0) return f === folder;
+				// Infer from path if metadata missing
+				const path = typeof r.metadata?.path === 'string' ? r.metadata.path : null;
+				if (path) {
+					const top = path.includes('/') ? path.slice(0, path.indexOf('/')) : 'root';
+					return top === folder;
+				}
+				// Keep memory-only hits without path when filtering (they may still be relevant)
+				return typeof r.memory === 'string' && r.memory.length > 0;
+			});
+			// If server already filtered well, filtered ≈ results; if server ignored filters, use filtered
+			if (filtered.length > 0 || results.length === 0) results = filtered;
+		}
+
+		return { results, timing: raw?.timing, total: results.length };
+	}
+
+	/**
+	 * Create memories directly (fills profile static/dynamic).
+	 * Use when Local indexed documents for search but LLM extraction left profile empty.
+	 */
+	async createMemories(p: {
+		containerTag: string;
+		memories: Array<{ content: string; isStatic?: boolean }>;
+	}): Promise<unknown> {
+		return this.post('/v4/memories', {
+			containerTag: p.containerTag,
+			memories: p.memories.map((m) => ({
+				content: m.content.slice(0, 10_000),
+				isStatic: m.isStatic ?? false,
+			})),
+		});
 	}
 
 	async profile(p: { containerTag: string; q?: string; threshold?: number }): Promise<ProfileReply> {

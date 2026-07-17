@@ -1,5 +1,6 @@
 import { Notice, Plugin, TAbstractFile, TFile, debounce } from 'obsidian';
 import { smMessage } from './api';
+import { writeTopicChroniclePrompt } from './chronicle';
 import {
 	AUTO_SYNC_MS,
 	DEFAULT_SETTINGS,
@@ -7,6 +8,8 @@ import {
 	setDebug,
 	type PluginSettings,
 } from './config';
+import { attachContradictionWatcher } from './contradict';
+import { writeLivingProfileNote } from './livingProfile';
 import { containerTag } from './notes';
 import {
 	checkHealth,
@@ -15,6 +18,8 @@ import {
 	isOnline,
 	type HealthState,
 } from './status';
+import { buildProfileFactsFromVault } from './profileBuild';
+import { rememberSelection } from './remember';
 import { cancelSync, syncBusy, syncOne, syncVault } from './sync';
 import { HOME_VIEW, HomePanel } from './ui/home';
 import { PROFILE_VIEW, ProfilePanel } from './ui/profile';
@@ -85,6 +90,43 @@ export default class SupermemoryPlugin extends Plugin {
 			name: 'Open vault profile',
 			callback: () => void openPanel(this.app, PROFILE_VIEW),
 		});
+		this.addCommand({
+			id: 'build-profile-facts',
+			name: 'Build profile facts from notes',
+			callback: () => {
+				void (async () => {
+					await buildProfileFactsFromVault(this.app, this);
+				})();
+			},
+		});
+		this.addCommand({
+			id: 'remember-selection',
+			name: 'Remember selection as memory',
+			callback: () => {
+				void rememberSelection(this, { asStatic: false });
+			},
+		});
+		this.addCommand({
+			id: 'remember-selection-static',
+			name: 'Remember selection as stable fact',
+			callback: () => {
+				void rememberSelection(this, { asStatic: true });
+			},
+		});
+		this.addCommand({
+			id: 'update-living-profile',
+			name: 'Update living profile note',
+			callback: () => {
+				void writeLivingProfileNote(this, { open: true });
+			},
+		});
+		this.addCommand({
+			id: 'topic-chronicle',
+			name: 'Write topic chronicle',
+			callback: () => {
+				void writeTopicChroniclePrompt(this);
+			},
+		});
 
 		// Hub first — primary entry for the Local workflow
 		this.addRibbonIcon('brain-circuit', 'Supermemory hub', () => {
@@ -99,6 +141,9 @@ export default class SupermemoryPlugin extends Plugin {
 		this.statusEl.setAttr('aria-label', 'Supermemory Local connection');
 		this.statusEl.addEventListener('click', () => void openPanel(this.app, HOME_VIEW));
 		this.paintStatusBar({ state: 'no-key' }, false);
+
+		// Peak SM: contradict-as-you-type against profile memories
+		attachContradictionWatcher(this);
 
 		// Auto-sync active note (optional)
 		const onEdit = debounce(
@@ -211,6 +256,11 @@ export default class SupermemoryPlugin extends Plugin {
 				: {};
 		this.settings.debug = !!this.settings.debug;
 		this.settings.autoSync = !!this.settings.autoSync;
+		this.settings.contradictWhileTyping =
+			this.settings.contradictWhileTyping !== false;
+		if (!this.settings.livingProfilePath) {
+			this.settings.livingProfilePath = DEFAULT_SETTINGS.livingProfilePath;
+		}
 	}
 
 	async saveSettings(): Promise<void> {
